@@ -13,6 +13,7 @@
     "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
     "no-console": "off"
   },
+  "ignorePatterns": ["lib/**"],
   "overrides": [
     {
       "files": ["scripts/**/*.js"],
@@ -21,7 +22,7 @@
         "browser": false
       },
       "parserOptions": {
-        "sourceType": "script"
+        "sourceType": "module"
       }
     }
   ]
