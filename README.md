@@ -1,96 +1,74 @@
 # Lookalike
 
-A Chrome extension that intelligently groups tabs using **semantic AI** - it understands content meaning, not just keywords. All processing happens locally in your browser for maximum privacy.
+<div align="center">
+  <img src="icons/icon128.png" alt="Lookalike Icon" width="128" height="128">
+  <p><strong>Intelligent tab grouping using semantic AI</strong></p>
+</div>
 
-## Features
+A Chrome extension that automatically groups similar tabs by understanding their content meaning, not just keywords. All AI processing runs locally in your browser for maximum privacy.
 
-- **Semantic Understanding**: Uses transformer-based embeddings (all-MiniLM-L6-v2) to understand the actual meaning of page content
-- **Dynamic Group Names**: Group names are generated from the actual content, not predefined categories
-- **Smart Clustering**: Tabs are grouped based on cosine similarity of their semantic embeddings
-- **Privacy-First**: All AI processing runs locally in your browser - no data sent to external servers
-- **Beautiful UI**: Modern, sleek dark interface with real-time status updates
+## Why This Extension?
 
-## How It Works
+When you have dozens of browser tabs open, manually organizing them is time-consuming and tedious. Traditional grouping methods rely on keywords or domains, but they miss the actual meaning behind the content. 
 
-1. **Content Extraction**: The extension extracts meaningful text from each page (title, meta, headings, main content)
-2. **Semantic Embeddings**: Each tab's content is converted to a 384-dimensional embedding vector using transformers.js
-3. **Similarity Matching**: Tabs with similar embeddings (cosine similarity > 0.45) are clustered together
-4. **Intelligent Naming**: Group names are derived from shared key phrases across clustered tabs
+**Lookalike solves this by:**
+- Understanding the semantic meaning of each page (not just matching words)
+- Automatically grouping related content, even when it's from different websites
+- Creating meaningful group names based on shared themes
+- Processing everything locally—your browsing data never leaves your computer
+
+For example, tabs about "JavaScript tutorials", "React documentation", and "Node.js guides" will be grouped together as "Web Development", even though they share few common keywords.
+
+## How Tabs Are Grouped
+
+The grouping process happens in 4 steps:
+
+### 1. Content Extraction
+The extension extracts meaningful text from each page:
+- Page title and meta descriptions
+- Headings and main content
+- Key phrases that represent the page's topic
+
+### 2. Semantic Embeddings
+Each tab's content is converted into a 384-dimensional vector (embedding) using the `all-MiniLM-L6-v2` AI model. This numerical representation captures the semantic meaning of the content.
+
+### 3. Similarity Matching
+The extension compares all tab embeddings using cosine similarity:
+- Tabs with similarity ≥ 0.45 are considered related
+- Related tabs are clustered together into groups
+- Only groups with 2+ tabs are created
+
+### 4. Group Naming
+Each group gets an intelligent name:
+- Finds key phrases shared across multiple tabs in the cluster
+- Uses the most common shared phrase as the group name
+- Falls back to domain-based names if no shared phrases exist
+
+**Example:** Tabs about "Python programming", "JavaScript tutorials", and "Ruby guides" might be grouped as "Programming" because they share the semantic theme of coding education, even with different keywords.
 
 ## Installation
 
-### From Source
-
 1. Clone or download this repository
-2. Generate the icons (if not present):
+2. Generate icons (if not present):
    ```bash
    node scripts/generate-icons.js
    ```
-3. Open Chrome and navigate to `chrome://extensions/`
-4. Enable "Developer mode" in the top right corner
-5. Click "Load unpacked" and select the extension directory
-6. The Lookalike icon should appear in your extensions bar
+3. Open Chrome and go to `chrome://extensions/`
+4. Enable "Developer mode" (top right)
+5. Click "Load unpacked" and select this directory
 
-### First Run
-
-On first load, the extension will download the semantic model (~23MB). This happens once and is cached for future use. You'll see "Loading semantic model..." in the popup until it's ready.
+**First Run:** The extension downloads the AI model (~23MB) on first load. This happens once and is cached for future use.
 
 ## Usage
 
-1. **Analyze All**: Click "Analyze All" to process all open tabs in the current window
-2. **Automatic Grouping**: Similar tabs will be automatically grouped with meaningful names
-3. **Regroup**: Click the refresh button to re-cluster tabs after opening new ones
-4. **Ungroup**: Click the X button to remove all groups
+- **Analyze All**: Click to process all open tabs and group them automatically
+- **Regroup**: Re-cluster tabs after opening new ones
+- **Ungroup**: Remove all groups
 
-## File Structure
-
-```
-lookalike/
-├── manifest.json              # Extension manifest (Manifest V3)
-├── background/
-│   ├── service-worker.js      # Main background logic & tab management
-│   ├── semantic-processor.js  # Semantic embedding & clustering engine
-│   ├── storage-manager.js     # Persistent storage handling
-│   └── error-handler.js       # Error handling utilities
-├── content/
-│   └── content-script.js      # Page content extraction
-├── popup/
-│   ├── popup.html             # Popup UI structure
-│   ├── popup.js               # Popup logic
-│   └── popup.css              # Popup styling (dark theme)
-├── scripts/
-│   └── generate-icons.js      # Icon generation utility
-├── icons/
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
-└── README.md
-```
 
 ## Technical Details
 
-### Semantic Model
-
 - **Model**: `Xenova/all-MiniLM-L6-v2` via transformers.js
 - **Embedding Size**: 384 dimensions
-- **Processing**: Mean pooling with L2 normalization
-
-### Clustering Algorithm
-
-- Uses agglomerative clustering based on cosine similarity
-- Default similarity threshold: 0.45 (empirically tuned for web content)
-- Minimum cluster size: 2 tabs
-
-### Group Naming
-
-1. Extract key phrases from all tabs in a cluster
-2. Find phrases appearing in multiple tabs (shared themes)
-3. Use the most common shared phrase as the group name
-4. Fallback to domain-based naming if no shared phrases
-
-## Privacy
-
-All processing happens locally:
-- The semantic model runs entirely in your browser via WebAssembly
-- No page content is ever sent to external servers
-- Tab data is stored locally in Chrome's extension storage
+- **Similarity Threshold**: 0.45 (cosine similarity)
+- **Minimum Cluster Size**: 2 tabs
