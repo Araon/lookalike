@@ -1,12 +1,14 @@
 /**
  * Popup UI Controller for Lookalike Extension
+ * Updated for semantic grouping
  */
 
 // DOM Elements
 const elements = {
   totalTabs: document.getElementById('total-tabs'),
   totalGroups: document.getElementById('total-groups'),
-  analyzedTabs: document.getElementById('analyzed-tabs'),
+  modelStatus: document.getElementById('model-status'),
+  analyzeAllBtn: document.getElementById('analyze-all-btn'),
   regroupBtn: document.getElementById('regroup-btn'),
   ungroupBtn: document.getElementById('ungroup-btn'),
   groupsList: document.getElementById('groups-list'),
@@ -19,8 +21,9 @@ const elements = {
 
 // State
 let state = {
-  tabThemes: {},
-  themeGroups: {},
+  modelStatus: 'idle',
+  tabs: [],
+  groups: [],
   allTabs: []
 };
 
@@ -38,8 +41,9 @@ async function init() {
     const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
     
     if (response) {
-      state.tabThemes = response.tabThemes || {};
-      state.themeGroups = response.themeGroups || {};
+      state.modelStatus = response.modelStatus || 'idle';
+      state.tabs = response.tabs || [];
+      state.groups = response.groups || [];
     }
     
     renderUI();
@@ -58,6 +62,7 @@ async function init() {
  * Set up event listeners
  */
 function setupEventListeners() {
+  elements.analyzeAllBtn.addEventListener('click', handleAnalyzeAll);
   elements.regroupBtn.addEventListener('click', handleRegroup);
   elements.ungroupBtn.addEventListener('click', handleUngroup);
   elements.analyzeCurrentBtn.addEventListener('click', handleAnalyzeCurrent);
@@ -65,10 +70,19 @@ function setupEventListeners() {
   
   // Listen for updates from background
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'THEME_UPDATE') {
-      state.tabThemes = message.data.tabThemes || {};
-      state.themeGroups = message.data.themeGroups || {};
+    if (message.type === 'STATE_UPDATE') {
+      state.modelStatus = message.data.modelStatus || state.modelStatus;
+      state.tabs = message.data.tabs || [];
+      state.groups = message.data.groups || [];
       renderUI();
+    } else if (message.type === 'MODEL_READY') {
+      state.modelStatus = 'ready';
+      updateModelStatus();
+      showToast('Semantic model ready', 'success');
+    } else if (message.type === 'MODEL_ERROR') {
+      state.modelStatus = 'error';
+      updateModelStatus();
+      showToast('Model failed to load', 'error');
     }
   });
 }
@@ -77,21 +91,66 @@ function setupEventListeners() {
  * Render the entire UI
  */
 function renderUI() {
+  updateModelStatus();
   updateStats();
   renderGroups();
   renderUngroupedTabs();
   
-  const hasData = Object.keys(state.tabThemes).length > 0 || Object.keys(state.themeGroups).length > 0;
+  const hasData = state.tabs.length > 0 || state.groups.length > 0;
   elements.emptyState.classList.toggle('visible', !hasData);
+}
+
+/**
+ * Update model status display
+ */
+function updateModelStatus() {
+  const statusEl = elements.modelStatus;
+  const textEl = statusEl.querySelector('.model-status-text');
+  const iconEl = statusEl.querySelector('.model-status-icon');
+  
+  switch (state.modelStatus) {
+    case 'loading':
+      statusEl.className = 'model-status loading';
+      textEl.textContent = 'Loading semantic model...';
+      iconEl.innerHTML = '<div class="spinner-small"></div>';
+      break;
+    case 'ready':
+      statusEl.className = 'model-status ready';
+      textEl.textContent = 'Semantic AI ready';
+      iconEl.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 6L9 17l-5-5"></path>
+        </svg>
+      `;
+      // Hide after a delay
+      setTimeout(() => {
+        statusEl.classList.add('hidden');
+      }, 2000);
+      break;
+    case 'error':
+      statusEl.className = 'model-status error';
+      textEl.textContent = 'Model failed to load';
+      iconEl.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M15 9l-6 6M9 9l6 6"></path>
+        </svg>
+      `;
+      break;
+    default:
+      statusEl.className = 'model-status';
+      textEl.textContent = 'Initializing...';
+      iconEl.innerHTML = '<div class="spinner-small"></div>';
+  }
 }
 
 /**
  * Update statistics display
  */
 function updateStats() {
-  elements.totalTabs.textContent = state.allTabs.length;
-  elements.totalGroups.textContent = Object.keys(state.themeGroups).length;
-  elements.analyzedTabs.textContent = Object.keys(state.tabThemes).length;
+  const analyzedCount = state.tabs.filter(t => !t.pending).length;
+  if (elements.totalTabs) elements.totalTabs.textContent = analyzedCount;
+  if (elements.totalGroups) elements.totalGroups.textContent = state.groups.length;
 }
 
 /**
@@ -100,12 +159,12 @@ function updateStats() {
 function renderGroups() {
   elements.groupsList.innerHTML = '';
   
-  if (Object.keys(state.themeGroups).length === 0) {
+  if (state.groups.length === 0) {
     return;
   }
   
-  for (const [themeName, groupData] of Object.entries(state.themeGroups)) {
-    const groupCard = createGroupCard(themeName, groupData);
+  for (const group of state.groups) {
+    const groupCard = createGroupCard(group);
     elements.groupsList.appendChild(groupCard);
   }
 }
@@ -113,38 +172,38 @@ function renderGroups() {
 /**
  * Create a group card element
  */
-function createGroupCard(themeName, groupData) {
+function createGroupCard(group) {
   const card = document.createElement('div');
   card.className = 'group-card';
   
   // Get tabs in this group
-  const groupTabs = groupData.tabIds
+  const groupTabs = group.tabIds
     .map(tabId => {
       const tab = state.allTabs.find(t => t.id === tabId);
-      const theme = state.tabThemes[tabId];
-      return { tab, theme };
+      const tabData = state.tabs.find(t => t.tabId === tabId);
+      return { tab, tabData };
     })
     .filter(({ tab }) => tab);
   
-  // Get keywords from first tab's theme
-  const keywords = state.tabThemes[groupData.tabIds[0]]?.keywords || [];
+  // Get key phrases for the group
+  const keyPhrases = groupTabs
+    .flatMap(({ tabData }) => tabData?.keyPhrases || [])
+    .slice(0, 3);
   
   card.innerHTML = `
     <div class="group-header">
-      <div class="group-color ${groupData.color || 'grey'}"></div>
+      <div class="group-color-dot" data-color="${group.color || 'grey'}"></div>
       <div class="group-info">
-        <div class="group-name">${escapeHtml(groupData.groupName || themeName)}</div>
-        <div class="group-count">${groupTabs.length} tabs</div>
+        <div class="group-name">${escapeHtml(group.groupName)}</div>
+        ${keyPhrases.length > 0 ? `
+          <div class="group-keywords">${keyPhrases.map(k => escapeHtml(k)).join(' · ')}</div>
+        ` : ''}
       </div>
-      <svg class="group-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <div class="group-meta">${groupTabs.length}</div>
+      <svg class="group-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M19 9l-7 7-7-7"/>
       </svg>
     </div>
-    ${keywords.length > 0 ? `
-    <div class="keywords">
-      ${keywords.slice(0, 5).map(k => `<span class="keyword">${escapeHtml(k)}</span>`).join('')}
-    </div>
-    ` : ''}
     <div class="group-tabs">
       ${groupTabs.map(({ tab }) => createTabItemHTML(tab)).join('')}
     </div>
@@ -163,7 +222,6 @@ function createGroupCard(themeName, groupData) {
       const tab = groupTabs[index].tab;
       if (tab) {
         chrome.tabs.update(tab.id, { active: true });
-        window.close();
       }
     });
   });
@@ -179,36 +237,49 @@ function renderUngroupedTabs() {
   
   // Find tabs that are analyzed but not in any group
   const groupedTabIds = new Set();
-  for (const groupData of Object.values(state.themeGroups)) {
-    groupData.tabIds.forEach(id => groupedTabIds.add(id));
+  for (const group of state.groups) {
+    group.tabIds.forEach(id => groupedTabIds.add(id));
   }
   
-  const ungroupedTabs = state.allTabs.filter(tab => {
-    return state.tabThemes[tab.id] && !groupedTabIds.has(tab.id);
-  });
+  const ungroupedTabs = state.tabs
+    .filter(t => !t.pending && !groupedTabIds.has(t.tabId))
+    .map(t => ({
+      tabData: t,
+      tab: state.allTabs.find(at => at.id === t.tabId)
+    }))
+    .filter(({ tab }) => tab);
   
   if (ungroupedTabs.length === 0) {
-    elements.ungroupedList.innerHTML = '<div class="tab-item" style="justify-content: center; color: var(--text-muted);">No ungrouped analyzed tabs</div>';
     return;
   }
   
-  ungroupedTabs.forEach(tab => {
-    const tabItem = createTabItem(tab);
-    elements.ungroupedList.appendChild(tabItem);
+  const section = document.createElement('div');
+  section.className = 'ungrouped-section';
+  section.innerHTML = `
+    <div class="section-title">
+      <span>Ungrouped</span>
+      <span class="section-count">${ungroupedTabs.length}</span>
+    </div>
+  `;
+  
+  ungroupedTabs.forEach(({ tab, tabData }) => {
+    const tabItem = createTabItem(tab, tabData);
+    section.appendChild(tabItem);
   });
+  
+  elements.ungroupedList.appendChild(section);
 }
 
 /**
  * Create a tab item element
  */
-function createTabItem(tab) {
+function createTabItem(tab, tabData) {
   const div = document.createElement('div');
   div.className = 'tab-item';
-  div.innerHTML = createTabItemHTML(tab);
+  div.innerHTML = createTabItemHTML(tab, tabData);
   
   div.addEventListener('click', () => {
     chrome.tabs.update(tab.id, { active: true });
-    window.close();
   });
   
   return div;
@@ -217,28 +288,56 @@ function createTabItem(tab) {
 /**
  * Create tab item HTML
  */
-function createTabItemHTML(tab) {
-  const theme = state.tabThemes[tab.id];
+function createTabItemHTML(tab, _tabData = null) {
   const favicon = tab.favIconUrl;
-  const url = new URL(tab.url || 'about:blank').hostname;
+  let hostname = '';
+  try {
+    hostname = new URL(tab.url || 'about:blank').hostname.replace('www.', '');
+  } catch {
+    hostname = '';
+  }
   
   return `
     ${favicon ? 
-      `<img class="tab-favicon" src="${escapeHtml(favicon)}" alt="">` :
-      `<div class="tab-favicon-placeholder">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-          <path d="M2 17l10 5 10-5"/>
-          <path d="M2 12l10 5 10-5"/>
+      `<img class="tab-favicon" src="${escapeHtml(favicon)}" alt="" onerror="this.style.display='none'">` :
+      `<div class="tab-favicon placeholder">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
         </svg>
       </div>`
     }
-    <div class="tab-info">
-      <div class="tab-title">${escapeHtml(tab.title || 'Untitled')}</div>
-      <div class="tab-url">${escapeHtml(url)}</div>
+    <div class="tab-content">
+      <div class="tab-title" title="${escapeHtml(tab.title)}">${escapeHtml(tab.title || 'Untitled')}</div>
+      <div class="tab-url">${escapeHtml(hostname)}</div>
     </div>
-    ${theme ? `<span class="tab-theme">${escapeHtml(theme.primary)}</span>` : ''}
   `;
+}
+
+/**
+ * Handle analyze all tabs
+ */
+async function handleAnalyzeAll() {
+  elements.analyzeAllBtn.disabled = true;
+  elements.analyzeAllBtn.classList.add('loading');
+  showToast('Analyzing all tabs...', 'info');
+  
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'ANALYZE_ALL' });
+    
+    if (response.success) {
+      showToast(`Analyzed ${response.analyzed} tabs`, 'success');
+      
+      // Refresh state
+      await refreshState();
+    } else {
+      showToast(response.error || 'Failed to analyze', 'error');
+    }
+  } catch (error) {
+    showToast('Error analyzing tabs', 'error');
+  } finally {
+    elements.analyzeAllBtn.disabled = false;
+    elements.analyzeAllBtn.classList.remove('loading');
+  }
 }
 
 /**
@@ -252,16 +351,8 @@ async function handleRegroup() {
     const response = await chrome.runtime.sendMessage({ type: 'REGROUP_ALL' });
     
     if (response.success) {
-      showToast('Tabs regrouped successfully!', 'success');
-      
-      // Refresh state
-      const stateResponse = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
-      if (stateResponse) {
-        state.tabThemes = stateResponse.tabThemes || {};
-        state.themeGroups = stateResponse.themeGroups || {};
-        state.allTabs = await chrome.tabs.query({ currentWindow: true });
-        renderUI();
-      }
+      showToast('Tabs regrouped', 'success');
+      await refreshState();
     } else {
       showToast(response.error || 'Failed to regroup', 'error');
     }
@@ -282,10 +373,8 @@ async function handleUngroup() {
     const response = await chrome.runtime.sendMessage({ type: 'UNGROUP_ALL' });
     
     if (response.success) {
-      showToast('All tabs ungrouped', 'success');
-      
-      // Refresh state
-      state.themeGroups = {};
+      showToast('Tabs ungrouped', 'success');
+      state.groups = [];
       state.allTabs = await chrome.tabs.query({ currentWindow: true });
       renderUI();
     } else {
@@ -306,11 +395,11 @@ async function handleAnalyzeCurrent() {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
     if (!activeTab) {
-      showToast('No active tab found', 'error');
+      showToast('No active tab', 'error');
       return;
     }
     
-    showToast('Analyzing tab...', 'info');
+    showToast('Analyzing...', 'info');
     
     const response = await chrome.runtime.sendMessage({ 
       type: 'ANALYZE_TAB', 
@@ -318,15 +407,8 @@ async function handleAnalyzeCurrent() {
     });
     
     if (response && !response.error) {
-      showToast(`Theme: ${response.primary}`, 'success');
-      
-      // Refresh state
-      const stateResponse = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
-      if (stateResponse) {
-        state.tabThemes = stateResponse.tabThemes || {};
-        state.themeGroups = stateResponse.themeGroups || {};
-        renderUI();
-      }
+      showToast('Tab analyzed', 'success');
+      await refreshState();
     } else {
       showToast(response?.error || 'Failed to analyze', 'error');
     }
@@ -341,12 +423,26 @@ async function handleAnalyzeCurrent() {
 async function handleClearCache() {
   try {
     await chrome.runtime.sendMessage({ type: 'CLEAR_CACHE' });
-    state.tabThemes = {};
-    state.themeGroups = {};
+    state.tabs = [];
+    state.groups = [];
     renderUI();
-    showToast('Cache cleared', 'success');
+    showToast('All data cleared', 'success');
   } catch (error) {
     showToast('Error clearing cache', 'error');
+  }
+}
+
+/**
+ * Refresh state from background
+ */
+async function refreshState() {
+  const response = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
+  if (response) {
+    state.modelStatus = response.modelStatus || state.modelStatus;
+    state.tabs = response.tabs || [];
+    state.groups = response.groups || [];
+    state.allTabs = await chrome.tabs.query({ currentWindow: true });
+    renderUI();
   }
 }
 
@@ -354,14 +450,13 @@ async function handleClearCache() {
  * Show/hide loading state
  */
 function showLoading(show) {
-  elements.loading.classList.toggle('visible', show);
+  if (elements.loading) elements.loading.classList.toggle('visible', show);
 }
 
 /**
  * Show a toast notification
  */
 function showToast(message, type = 'info') {
-  // Remove existing toast
   const existingToast = document.querySelector('.toast');
   if (existingToast) {
     existingToast.remove();
@@ -372,12 +467,10 @@ function showToast(message, type = 'info') {
   toast.textContent = message;
   document.body.appendChild(toast);
   
-  // Trigger animation
   requestAnimationFrame(() => {
     toast.classList.add('visible');
   });
   
-  // Remove after delay
   setTimeout(() => {
     toast.classList.remove('visible');
     setTimeout(() => toast.remove(), 300);
@@ -396,4 +489,3 @@ function escapeHtml(text) {
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', init);
-

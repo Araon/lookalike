@@ -3,107 +3,95 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lookalike - Tab Groups</title>
+  <title>Lookalike</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
-    <!-- Header -->
+  <div class="app-container">
+    <!-- Header with Stats -->
     <header class="header">
-      <div class="logo">
+      <div class="logo-area">
         <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="2" y="3" width="8" height="7" rx="1.5" fill="currentColor"/>
-          <rect x="14" y="3" width="8" height="7" rx="1.5" fill="currentColor" opacity="0.7"/>
-          <rect x="2" y="14" width="8" height="7" rx="1.5" fill="currentColor" opacity="0.7"/>
-          <rect x="14" y="14" width="8" height="7" rx="1.5" fill="currentColor" opacity="0.4"/>
+          <path d="M2 6C2 4.89543 2.89543 4 4 4H20C21.1046 4 22 4.89543 22 6V18C22 19.1046 21.1046 20 20 20H4C2.89543 20 2 19.1046 2 18V6Z" stroke="currentColor" stroke-width="2"/>
+          <path d="M2 9H22" stroke="currentColor" stroke-width="2"/>
+          <path d="M6 13H10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M6 16H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
         <h1>Lookalike</h1>
       </div>
-      <p class="tagline">Smart Tab Grouping</p>
+      <div class="stats-mini">
+        <span id="total-tabs" class="stat-item" title="Analyzed Tabs">0</span>
+        <span class="divider">/</span>
+        <span id="total-groups" class="stat-item" title="Groups">0</span>
+      </div>
     </header>
 
-    <!-- Stats Bar -->
-    <div class="stats-bar">
-      <div class="stat">
-        <span class="stat-value" id="total-tabs">0</span>
-        <span class="stat-label">Tabs</span>
+    <!-- Model Status Banner -->
+    <div id="model-status" class="model-status">
+      <div class="model-status-icon">
+        <div class="spinner-small"></div>
       </div>
-      <div class="stat">
-        <span class="stat-value" id="total-groups">0</span>
-        <span class="stat-label">Groups</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value" id="analyzed-tabs">0</span>
-        <span class="stat-label">Analyzed</span>
-      </div>
+      <span class="model-status-text">Loading semantic model...</span>
     </div>
 
-    <!-- Actions -->
-    <div class="actions">
-      <button class="btn btn-primary" id="regroup-btn">
-        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <!-- Main Action Area -->
+    <div class="action-bar">
+      <button class="btn-primary" id="analyze-all-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <path d="M21 21l-4.35-4.35"></path>
+        </svg>
+        <span>Analyze All</span>
+      </button>
+      <button class="btn-secondary" id="regroup-btn" title="Regroup Tabs">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
         </svg>
-        Regroup All
       </button>
-      <button class="btn btn-secondary" id="ungroup-btn">
-        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button class="btn-icon" id="ungroup-btn" title="Ungroup All">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
         </svg>
-        Ungroup
       </button>
     </div>
 
-    <!-- Groups Section -->
-    <section class="section">
-      <h2 class="section-title">
-        <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-        </svg>
-        Tab Groups
-      </h2>
-      <div class="groups-list" id="groups-list">
-        <!-- Groups will be populated here -->
+    <!-- Content Area -->
+    <main class="content-scroll">
+      <!-- Groups -->
+      <div id="groups-list" class="list-section">
+        <!-- Populated via JS -->
       </div>
-    </section>
 
-    <!-- Ungrouped Tabs Section -->
-    <section class="section">
-      <h2 class="section-title">
-        <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-        </svg>
-        Ungrouped Tabs
-      </h2>
-      <div class="tabs-list" id="ungrouped-list">
-        <!-- Ungrouped tabs will be populated here -->
+      <!-- Ungrouped -->
+      <div id="ungrouped-list" class="list-section">
+        <!-- Populated via JS -->
       </div>
-    </section>
+      
+      <!-- Loading State -->
+      <div class="state-message" id="loading">
+        <div class="spinner"></div>
+        <p>Analyzing tabs...</p>
+      </div>
 
-    <!-- Loading State -->
-    <div class="loading" id="loading">
-      <div class="spinner"></div>
-      <p>Analyzing tabs...</p>
-    </div>
+      <!-- Empty State -->
+      <div class="state-message" id="empty-state">
+        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+          <path d="M3 9h18"></path>
+          <path d="M9 21V9"></path>
+        </svg>
+        <p>Click "Analyze All" to start</p>
+        <span class="empty-hint">Semantic AI will group similar tabs</span>
+      </div>
+    </main>
 
-    <!-- Empty State -->
-    <div class="empty-state" id="empty-state">
-      <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
-      </svg>
-      <p>No tabs analyzed yet</p>
-      <span>Browse some pages to start grouping</span>
-    </div>
-
-    <!-- Footer -->
+    <!-- Footer Controls -->
     <footer class="footer">
-      <button class="link-btn" id="analyze-current">Analyze Current Tab</button>
-      <span class="divider">•</span>
-      <button class="link-btn" id="clear-cache">Clear Cache</button>
+      <button class="footer-link" id="analyze-current">Analyze Current</button>
+      <button class="footer-link" id="clear-cache">Reset All</button>
     </footer>
   </div>
 
   <script src="popup.js"></script>
 </body>
 </html>
-
