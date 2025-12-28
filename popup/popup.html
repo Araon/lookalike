@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lookalike - Tab Groups</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="3" width="8" height="7" rx="1.5" fill="currentColor"/>
+          <rect x="14" y="3" width="8" height="7" rx="1.5" fill="currentColor" opacity="0.7"/>
+          <rect x="2" y="14" width="8" height="7" rx="1.5" fill="currentColor" opacity="0.7"/>
+          <rect x="14" y="14" width="8" height="7" rx="1.5" fill="currentColor" opacity="0.4"/>
+        </svg>
+        <h1>Lookalike</h1>
+      </div>
+      <p class="tagline">Smart Tab Grouping</p>
+    </header>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar">
+      <div class="stat">
+        <span class="stat-value" id="total-tabs">0</span>
+        <span class="stat-label">Tabs</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="total-groups">0</span>
+        <span class="stat-label">Groups</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="analyzed-tabs">0</span>
+        <span class="stat-label">Analyzed</span>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button class="btn btn-primary" id="regroup-btn">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        Regroup All
+      </button>
+      <button class="btn btn-secondary" id="ungroup-btn">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+        </svg>
+        Ungroup
+      </button>
+    </div>
+
+    <!-- Groups Section -->
+    <section class="section">
+      <h2 class="section-title">
+        <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+        </svg>
+        Tab Groups
+      </h2>
+      <div class="groups-list" id="groups-list">
+        <!-- Groups will be populated here -->
+      </div>
+    </section>
+
+    <!-- Ungrouped Tabs Section -->
+    <section class="section">
+      <h2 class="section-title">
+        <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        Ungrouped Tabs
+      </h2>
+      <div class="tabs-list" id="ungrouped-list">
+        <!-- Ungrouped tabs will be populated here -->
+      </div>
+    </section>
+
+    <!-- Loading State -->
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <p>Analyzing tabs...</p>
+    </div>
+
+    <!-- Empty State -->
+    <div class="empty-state" id="empty-state">
+      <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+      </svg>
+      <p>No tabs analyzed yet</p>
+      <span>Browse some pages to start grouping</span>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <button class="link-btn" id="analyze-current">Analyze Current Tab</button>
+      <span class="divider">•</span>
+      <button class="link-btn" id="clear-cache">Clear Cache</button>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+
