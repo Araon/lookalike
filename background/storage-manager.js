@@ -11,7 +11,8 @@ const memoryCache = {
   lastSync: 0
 };
 
-// Sync interval (5 minutes)
+// Sync interval (5 minutes) - reserved for future use
+// eslint-disable-next-line no-unused-vars
 const SYNC_INTERVAL = 5 * 60 * 1000;
 
 // Storage keys

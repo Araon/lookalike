@@ -125,7 +125,7 @@ function isInCorner(x, y, width, height, radius) {
   return false;
 }
 
-function isInSquare(x, y, padding, squareSize, width, height) {
+function isInSquare(x, y, padding, squareSize, _width, _height) {
   // Define the four squares positions
   const squares = [
     { row: 0, col: 0, x: padding, y: padding },
