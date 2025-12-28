@@ -4,6 +4,12 @@
  * Uses offscreen document for ML model inference
  */
 
+import { 
+  safeChromeCall, 
+  retryWithBackoff,
+  validateTab 
+} from './error-handler.js';
+
 // Store tab semantic data
 const tabSemantics = new Map(); // tabId -> semantic data (embedding, keyPhrases, etc.)
 const activeGroups = new Map(); // groupId -> { tabIds, groupName, color }
@@ -48,7 +54,7 @@ async function ensureOffscreen() {
       return;
     }
   } catch (e) {
-    console.log('Lookalike: Error checking offscreen contexts', e);
+    // Ignore - context check failed but we'll try to create anyway
   }
   
   if (offscreenCreated) return;
@@ -62,12 +68,10 @@ async function ensureOffscreen() {
     });
     
     offscreenCreated = true;
-    console.log('Lookalike: Offscreen document created');
   } catch (e) {
     if (e.message?.includes('single offscreen')) {
       // Already exists, that's fine
       offscreenCreated = true;
-      console.log('Lookalike: Offscreen document already exists');
     } else {
       throw e;
     }
@@ -89,8 +93,8 @@ async function waitForOffscreen() {
   
   try {
     await Promise.race([offscreenReadyPromise, timeout]);
-  } catch (e) {
-    console.log('Lookalike: Offscreen ready timeout, attempting anyway...');
+  } catch {
+    // Timeout - attempt to proceed anyway
   }
 }
 
@@ -116,8 +120,6 @@ async function sendToOffscreen(message) {
  * Initialize the extension
  */
 async function initialize() {
-  console.log('Lookalike: Initializing extension...');
-  
   try {
     // Create offscreen document and start loading model
     await ensureOffscreen();
@@ -129,7 +131,6 @@ async function initialize() {
       .then((result) => {
         if (result?.success) {
           modelStatus = 'ready';
-          console.log('Lookalike: Semantic model ready');
           notifyPopup({ type: 'MODEL_READY' });
         } else {
           modelStatus = 'error';
@@ -144,7 +145,6 @@ async function initialize() {
       });
     
     await loadStoredData();
-    console.log('Lookalike: Extension initialized successfully');
   } catch (error) {
     console.error('Lookalike: Failed to initialize', error);
   }
@@ -195,11 +195,8 @@ async function saveStoredData() {
  */
 async function processPageContent(tabId, content) {
   try {
-    console.log(`Lookalike: Processing content for tab ${tabId}:`, content.title);
-    
     // Check if model is ready
     if (modelStatus !== 'ready') {
-      console.log('Lookalike: Model still loading, queueing tab...');
       // Store basic info and process when model is ready
       tabSemantics.set(tabId, {
         pending: true,
@@ -322,75 +319,87 @@ async function reclusterTabs() {
 }
 
 /**
- * Apply a semantic cluster as a Chrome tab group
+ * Apply a semantic cluster as a Chrome tab group with safe operations
  */
 async function applyClusterAsGroup(cluster) {
+  const tabIds = cluster.tabs.map(t => t.tabId);
+  
+  if (tabIds.length < 2) return;
+  
+  // Filter to only valid tabs (that still exist)
+  const validTabIds = [];
+  const existingGroups = new Map();
+  
+  for (const tabId of tabIds) {
+    const tab = await safeChromeCall(() => chrome.tabs.get(tabId), null);
+    if (tab) {
+      validTabIds.push(tabId);
+      if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
+        const count = existingGroups.get(tab.groupId) || 0;
+        existingGroups.set(tab.groupId, count + 1);
+      }
+    }
+  }
+  
+  // Need at least 2 valid tabs
+  if (validTabIds.length < 2) return;
+  
+  // Find if there's an existing group with most of these tabs
+  let targetGroupId = null;
+  let maxCount = 0;
+  
+  for (const [groupId, count] of existingGroups.entries()) {
+    if (count > maxCount && count >= validTabIds.length / 2) {
+      maxCount = count;
+      targetGroupId = groupId;
+    }
+  }
+  
   try {
-    const tabIds = cluster.tabs.map(t => t.tabId);
-    
-    if (tabIds.length < 2) return;
-    
-    // Check if these tabs are already in a group together
-    const existingGroups = new Map();
-    for (const tabId of tabIds) {
-      try {
-        const tab = await chrome.tabs.get(tabId);
-        if (tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
-          const count = existingGroups.get(tab.groupId) || 0;
-          existingGroups.set(tab.groupId, count + 1);
-        }
-      } catch {
-        // Tab might be gone
-      }
-    }
-    
-    // Find if there's an existing group with most of these tabs
-    let targetGroupId = null;
-    let maxCount = 0;
-    
-    for (const [groupId, count] of existingGroups.entries()) {
-      if (count > maxCount && count >= tabIds.length / 2) {
-        maxCount = count;
-        targetGroupId = groupId;
-      }
-    }
-    
     if (targetGroupId) {
       // Add tabs to existing group
-      await chrome.tabs.group({
-        tabIds,
-        groupId: targetGroupId
-      });
+      await safeChromeCall(
+        () => chrome.tabs.group({ tabIds: validTabIds, groupId: targetGroupId }),
+        null
+      );
       
-      // Update group name if it's different
-      await chrome.tabGroups.update(targetGroupId, {
-        title: cluster.groupName,
-        color: cluster.color
-      });
+      // Update group properties
+      await safeChromeCall(
+        () => chrome.tabGroups.update(targetGroupId, {
+          title: cluster.groupName,
+          color: cluster.color
+        }),
+        null
+      );
       
-      // Update tracking
       activeGroups.set(targetGroupId, {
-        tabIds,
+        tabIds: validTabIds,
         groupName: cluster.groupName,
         color: cluster.color
       });
     } else {
       // Create new group
-      const groupId = await chrome.tabs.group({ tabIds });
+      const groupId = await safeChromeCall(
+        () => chrome.tabs.group({ tabIds: validTabIds }),
+        null
+      );
       
-      await chrome.tabGroups.update(groupId, {
-        title: cluster.groupName,
-        color: cluster.color,
-        collapsed: false
-      });
-      
-      activeGroups.set(groupId, {
-        tabIds,
-        groupName: cluster.groupName,
-        color: cluster.color
-      });
-      
-      console.log(`Lookalike: Created group "${cluster.groupName}" with ${tabIds.length} tabs`);
+      if (groupId) {
+        await safeChromeCall(
+          () => chrome.tabGroups.update(groupId, {
+            title: cluster.groupName,
+            color: cluster.color,
+            collapsed: false
+          }),
+          null
+        );
+        
+        activeGroups.set(groupId, {
+          tabIds: validTabIds,
+          groupName: cluster.groupName,
+          color: cluster.color
+        });
+      }
     }
   } catch (error) {
     console.error('Lookalike: Error applying cluster as group', error);
@@ -516,71 +525,120 @@ async function ungroupAllTabs() {
 }
 
 /**
- * Analyze a specific tab
+ * Analyze a specific tab with validation and error recovery
  */
 async function analyzeTab(tabId) {
-  try {
-    // Ensure model is loaded
-    if (modelStatus !== 'ready') {
-      if (modelInitPromise) {
-        await modelInitPromise;
-        if (modelStatus !== 'ready') {
-          throw new Error('Model not available');
-        }
-      } else {
+  // Validate tab first
+  const validation = await validateTab(tabId);
+  if (!validation.valid) {
+    throw new Error(`Tab ${tabId} is not valid: ${validation.reason}`);
+  }
+
+  // Ensure model is loaded
+  if (modelStatus !== 'ready') {
+    if (modelInitPromise) {
+      await modelInitPromise;
+      if (modelStatus !== 'ready') {
         throw new Error('Model not available');
       }
+    } else {
+      throw new Error('Model not available');
     }
-    
+  }
+  
+  // Use retry for transient failures
+  return await retryWithBackoff(async () => {
     // Inject content script and get content
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        const title = document.title || '';
-        const metaDescription = document.querySelector('meta[name="description"]')?.content || 
-                               document.querySelector('meta[property="og:description"]')?.content || '';
-        const ogTitle = document.querySelector('meta[property="og:title"]')?.content || '';
-        
-        // Get main content
-        const mainSelectors = ['main', 'article', '[role="main"]', '#content', '.content'];
-        let mainContent = '';
-        
-        for (const selector of mainSelectors) {
-          const el = document.querySelector(selector);
-          if (el) {
-            mainContent = el.textContent?.substring(0, 5000) || '';
-            break;
+    const results = await safeChromeCall(
+      () => chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const title = document.title || '';
+          const metaDescription = document.querySelector('meta[name="description"]')?.content || 
+                                 document.querySelector('meta[property="og:description"]')?.content || '';
+          const ogTitle = document.querySelector('meta[property="og:title"]')?.content || '';
+          
+          // Get main content
+          const mainSelectors = ['main', 'article', '[role="main"]', '#content', '.content'];
+          let mainContent = '';
+          
+          for (const selector of mainSelectors) {
+            const el = document.querySelector(selector);
+            if (el) {
+              mainContent = el.textContent?.substring(0, 5000) || '';
+              break;
+            }
           }
+          
+          if (!mainContent) {
+            mainContent = document.body?.textContent?.substring(0, 5000) || '';
+          }
+          
+          return {
+            title,
+            url: window.location.href,
+            metaDescription,
+            ogTitle,
+            mainContent: mainContent.replace(/\s+/g, ' ').trim(),
+            headings: Array.from(document.querySelectorAll('h1, h2, h3'))
+              .slice(0, 10)
+              .map(h => ({ level: parseInt(h.tagName[1]), text: h.textContent?.trim() }))
+          };
         }
-        
-        if (!mainContent) {
-          mainContent = document.body?.textContent?.substring(0, 5000) || '';
-        }
-        
-        return {
-          title,
-          url: window.location.href,
-          metaDescription,
-          ogTitle,
-          mainContent: mainContent.replace(/\s+/g, ' ').trim(),
-          headings: Array.from(document.querySelectorAll('h1, h2, h3'))
-            .slice(0, 10)
-            .map(h => ({ level: parseInt(h.tagName[1]), text: h.textContent?.trim() }))
-        };
-      }
-    });
+      }),
+      null
+    );
     
     if (results && results[0]?.result) {
       return await processPageContent(tabId, results[0].result);
     }
-  } catch (error) {
-    console.error(`Lookalike: Error analyzing tab ${tabId}`, error);
-    throw error;
+    
+    throw new Error('Failed to extract content from tab');
+  }, 2, 500); // 2 retries with 500ms base delay
+}
+
+// Concurrency limit for parallel tab analysis
+const ANALYSIS_CONCURRENCY = 3;
+
+/**
+ * Process items with limited concurrency
+ */
+async function processWithConcurrency(items, processor, concurrency, onProgress = null) {
+  const results = [];
+  let completed = 0;
+  let currentIndex = 0;
+  
+  async function processNext() {
+    while (currentIndex < items.length) {
+      const index = currentIndex++;
+      const item = items[index];
+      
+      try {
+        const result = await processor(item, index);
+        results[index] = { success: true, result };
+      } catch (error) {
+        results[index] = { success: false, error };
+      }
+      
+      completed++;
+      if (onProgress) {
+        onProgress(completed, items.length);
+      }
+    }
   }
+  
+  // Start concurrent workers
+  const workers = [];
+  for (let i = 0; i < Math.min(concurrency, items.length); i++) {
+    workers.push(processNext());
+  }
+  
+  await Promise.all(workers);
+  return results;
 }
 
 /**
- * Analyze all tabs in current window
+ * Analyze all tabs in current window with parallel processing
  */
 async function analyzeAllTabs() {
   try {
@@ -596,29 +654,40 @@ async function analyzeAllTabs() {
       }
     }
     
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    let analyzed = 0;
-    let errors = 0;
+    const allTabs = await chrome.tabs.query({ currentWindow: true });
     
-    for (const tab of tabs) {
-      // Skip special pages
-      if (!tab.url || 
-          tab.url.startsWith('chrome://') || 
-          tab.url.startsWith('chrome-extension://') ||
-          tab.url.startsWith('about:')) {
-        continue;
-      }
-      
-      try {
-        await analyzeTab(tab.id);
-        analyzed++;
-      } catch (err) {
-        console.error(`Failed to analyze tab ${tab.id}:`, err);
-        errors++;
-      }
+    // Filter to analyzable tabs
+    const tabs = allTabs.filter(tab => 
+      tab.url && 
+      !tab.url.startsWith('chrome://') && 
+      !tab.url.startsWith('chrome-extension://') &&
+      !tab.url.startsWith('about:')
+    );
+    
+    if (tabs.length === 0) {
+      return { success: true, analyzed: 0, errors: 0, total: 0 };
     }
     
-    return { success: true, analyzed, errors };
+    // Process tabs in parallel with concurrency limit
+    const results = await processWithConcurrency(
+      tabs,
+      async (tab) => await analyzeTab(tab.id),
+      ANALYSIS_CONCURRENCY,
+      (completed, total) => {
+        // Send progress updates to popup
+        notifyPopup({
+          type: 'ANALYSIS_PROGRESS',
+          progress: Math.round((completed / total) * 100),
+          completed,
+          total
+        });
+      }
+    );
+    
+    const analyzed = results.filter(r => r.success).length;
+    const errors = results.filter(r => !r.success).length;
+    
+    return { success: true, analyzed, errors, total: tabs.length };
   } catch (error) {
     console.error('Lookalike: Error analyzing all tabs', error);
     return { success: false, error: error.message };
@@ -630,7 +699,6 @@ async function analyzeAllTabs() {
  */
 function setSimilarityThreshold(threshold) {
   if (typeof threshold === 'number' && threshold >= 0 && threshold <= 1) {
-    console.log(`Lookalike: Similarity threshold set to ${threshold}`);
     return { success: true };
   }
   return { success: false, error: 'Invalid threshold value' };
@@ -645,7 +713,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   // Handle messages from offscreen document
   if (message.type === 'OFFSCREEN_READY') {
-    console.log('Lookalike: Offscreen document ready');
     offscreenReady = true;
     if (offscreenReadyResolve) {
       offscreenReadyResolve();
@@ -707,7 +774,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { status: modelStatus };
         
       default:
-        console.log('Lookalike: Unknown message type', message.type);
+        // Unknown message type - ignore
     }
   };
   
@@ -730,13 +797,11 @@ chrome.tabGroups.onRemoved.addListener((group) => {
 
 // Initialize on install/update
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Lookalike: Extension installed/updated');
   initialize();
 });
 
 // Initialize on startup
 chrome.runtime.onStartup.addListener(() => {
-  console.log('Lookalike: Browser started');
   initialize();
 });
 

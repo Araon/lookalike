@@ -12,14 +12,154 @@ env.useBrowserCache = true;
 // Color palette for tab groups
 const GROUP_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'];
 
+// Cache configuration
+const CACHE_CONFIG = {
+  MAX_ENTRIES: 500,        // Maximum cached embeddings
+  MAX_STORAGE_MB: 10,      // Maximum storage size in MB
+  STORAGE_KEY: 'lookalike_embedding_cache',
+  PERSIST_INTERVAL: 30000  // Save cache every 30 seconds
+};
+
+/**
+ * LRU Cache with persistence support
+ */
+class LRUCache {
+  constructor(maxSize = CACHE_CONFIG.MAX_ENTRIES) {
+    this.maxSize = maxSize;
+    this.cache = new Map();
+    this.accessOrder = []; // Track access order for LRU
+  }
+
+  get(key) {
+    if (!this.cache.has(key)) return undefined;
+    
+    // Move to end (most recently used)
+    this.accessOrder = this.accessOrder.filter(k => k !== key);
+    this.accessOrder.push(key);
+    
+    return this.cache.get(key);
+  }
+
+  set(key, value) {
+    // If key exists, update and move to end
+    if (this.cache.has(key)) {
+      this.cache.set(key, value);
+      this.accessOrder = this.accessOrder.filter(k => k !== key);
+      this.accessOrder.push(key);
+      return;
+    }
+
+    // Evict if at capacity
+    while (this.cache.size >= this.maxSize && this.accessOrder.length > 0) {
+      const lruKey = this.accessOrder.shift();
+      this.cache.delete(lruKey);
+    }
+
+    this.cache.set(key, value);
+    this.accessOrder.push(key);
+  }
+
+  has(key) {
+    return this.cache.has(key);
+  }
+
+  clear() {
+    this.cache.clear();
+    this.accessOrder = [];
+  }
+
+  size() {
+    return this.cache.size;
+  }
+
+  // Serialize for storage
+  toJSON() {
+    const entries = [];
+    for (const key of this.accessOrder) {
+      if (this.cache.has(key)) {
+        entries.push([key, this.cache.get(key)]);
+      }
+    }
+    return entries;
+  }
+
+  // Restore from storage
+  fromJSON(entries) {
+    this.clear();
+    if (!Array.isArray(entries)) return;
+    
+    // Only load up to maxSize entries (most recent ones)
+    const toLoad = entries.slice(-this.maxSize);
+    for (const [key, value] of toLoad) {
+      this.cache.set(key, value);
+      this.accessOrder.push(key);
+    }
+  }
+}
+
 class SemanticProcessor {
   constructor() {
     this.embedder = null;
     this.modelLoading = false;
     this.modelLoaded = false;
     this.pendingRequests = [];
-    this.embeddingCache = new Map();
+    this.embeddingCache = new LRUCache(CACHE_CONFIG.MAX_ENTRIES);
     this.colorIndex = 0;
+    this.cacheModified = false;
+    this.persistTimer = null;
+    
+    // Load cached embeddings from storage
+    this.loadCacheFromStorage();
+    
+    // Set up periodic cache persistence
+    this.persistTimer = setInterval(() => {
+      this.saveCacheToStorage();
+    }, CACHE_CONFIG.PERSIST_INTERVAL);
+  }
+
+  /**
+   * Load embedding cache from Chrome storage
+   */
+  async loadCacheFromStorage() {
+    try {
+      const data = await chrome.storage.local.get([CACHE_CONFIG.STORAGE_KEY]);
+      if (data[CACHE_CONFIG.STORAGE_KEY]) {
+        this.embeddingCache.fromJSON(data[CACHE_CONFIG.STORAGE_KEY]);
+      }
+    } catch {
+      // Ignore storage errors - start with empty cache
+    }
+  }
+
+  /**
+   * Save embedding cache to Chrome storage
+   */
+  async saveCacheToStorage() {
+    if (!this.cacheModified) return;
+    
+    try {
+      const cacheData = this.embeddingCache.toJSON();
+      
+      // Estimate size and truncate if too large
+      const jsonStr = JSON.stringify(cacheData);
+      const sizeMB = jsonStr.length / (1024 * 1024);
+      
+      if (sizeMB > CACHE_CONFIG.MAX_STORAGE_MB) {
+        // Reduce cache size by half
+        const entries = cacheData.slice(Math.floor(cacheData.length / 2));
+        await chrome.storage.local.set({
+          [CACHE_CONFIG.STORAGE_KEY]: entries
+        });
+      } else {
+        await chrome.storage.local.set({
+          [CACHE_CONFIG.STORAGE_KEY]: cacheData
+        });
+      }
+      
+      this.cacheModified = false;
+    } catch {
+      // Ignore storage errors
+    }
   }
 
   /**
@@ -36,8 +176,6 @@ class SemanticProcessor {
     this.modelLoading = true;
 
     try {
-      console.log('Lookalike Offscreen: Loading semantic embedding model...');
-      
       // Use a small, fast embedding model optimized for semantic similarity
       this.embedder = await pipeline(
         'feature-extraction',
@@ -45,7 +183,6 @@ class SemanticProcessor {
         { 
           progress_callback: (progress) => {
             if (progress.status === 'progress') {
-              console.log(`Lookalike Offscreen: Model loading ${Math.round(progress.progress)}%`);
               // Notify service worker of progress
               chrome.runtime.sendMessage({
                 type: 'MODEL_PROGRESS',
@@ -63,11 +200,10 @@ class SemanticProcessor {
       this.pendingRequests.forEach(resolve => resolve(true));
       this.pendingRequests = [];
 
-      console.log('Lookalike Offscreen: Semantic model loaded successfully');
       return true;
     } catch (error) {
       this.modelLoading = false;
-      console.error('Lookalike Offscreen: Failed to load semantic model', error);
+      console.error('Lookalike: Failed to load semantic model', error);
       throw error;
     }
   }
@@ -98,8 +234,9 @@ class SemanticProcessor {
 
     // Check cache
     const cacheKey = this.hashText(text);
-    if (this.embeddingCache.has(cacheKey)) {
-      return this.embeddingCache.get(cacheKey);
+    const cached = this.embeddingCache.get(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     // Truncate text to model's max length (roughly 512 tokens ≈ 2000 chars)
@@ -115,12 +252,13 @@ class SemanticProcessor {
       // Convert to regular array
       const embedding = Array.from(output.data);
 
-      // Cache the result
+      // Cache the result and mark as modified for persistence
       this.embeddingCache.set(cacheKey, embedding);
+      this.cacheModified = true;
 
       return embedding;
     } catch (error) {
-      console.error('Lookalike Offscreen: Error computing embedding', error);
+      console.error('Lookalike: Error computing embedding', error);
       throw error;
     }
   }
@@ -147,18 +285,13 @@ class SemanticProcessor {
    * Process page content and extract semantic features
    */
   async processContent(content) {
-    console.log(`Lookalike Offscreen: Processing "${content.title}"`);
-    
     const semanticText = this.extractSemanticContent(content);
-    console.log(`Lookalike Offscreen: Extracted ${semanticText.length} chars of semantic text`);
     
     // Compute embedding
     const embedding = await this.computeEmbedding(semanticText);
-    console.log(`Lookalike Offscreen: Generated embedding (${embedding.length} dimensions)`);
     
     // Extract key phrases for group naming
     const keyPhrases = this.extractKeyPhrases(content);
-    console.log(`Lookalike Offscreen: Key phrases: ${keyPhrases.slice(0, 5).join(', ')}`);
     
     return {
       embedding,
@@ -247,7 +380,37 @@ class SemanticProcessor {
   }
 
   /**
+   * Optimized cosine similarity using pre-computed norms
+   * Since embeddings are normalized (norm=1), dot product equals cosine similarity
+   */
+  fastCosineSimilarity(embedding1, embedding2) {
+    if (!embedding1 || !embedding2 || embedding1.length !== embedding2.length) {
+      return 0;
+    }
+    
+    // For normalized vectors, cosine similarity = dot product
+    let dotProduct = 0;
+    const len = embedding1.length;
+    
+    // Unrolled loop for better performance (process 4 elements at a time)
+    let i = 0;
+    for (; i + 3 < len; i += 4) {
+      dotProduct += embedding1[i] * embedding2[i] +
+                    embedding1[i+1] * embedding2[i+1] +
+                    embedding1[i+2] * embedding2[i+2] +
+                    embedding1[i+3] * embedding2[i+3];
+    }
+    // Handle remaining elements
+    for (; i < len; i++) {
+      dotProduct += embedding1[i] * embedding2[i];
+    }
+    
+    return dotProduct;
+  }
+
+  /**
    * Cluster tabs based on semantic similarity
+   * Optimized with pre-computed similarity matrix and early termination
    */
   async clusterTabs(tabsData, similarityThreshold = 0.5) {
     // Convert from object format to array
@@ -256,62 +419,85 @@ class SemanticProcessor {
       ...data
     }));
 
-    console.log(`Lookalike Offscreen: Clustering ${tabs.length} tabs with threshold ${similarityThreshold}`);
+    const n = tabs.length;
+    if (n === 0) return [];
+    if (n === 1) return []; // Need at least 2 tabs for a cluster
 
-    if (tabs.length === 0) return [];
-
-    // Log similarity matrix for debugging
-    console.log('Lookalike Offscreen: Similarity matrix:');
-    for (let i = 0; i < Math.min(tabs.length, 5); i++) {
-      for (let j = i + 1; j < Math.min(tabs.length, 5); j++) {
-        const sim = this.cosineSimilarity(tabs[i].embedding, tabs[j].embedding);
-        console.log(`  "${tabs[i].title?.slice(0, 30)}..." ↔ "${tabs[j].title?.slice(0, 30)}...": ${sim.toFixed(3)}`);
-      }
-    }
-
-    // Build similarity matrix
-    const clusters = [];
-    const assigned = new Set();
-
-    for (let i = 0; i < tabs.length; i++) {
-      if (assigned.has(tabs[i].tabId)) continue;
-
-      const cluster = {
-        tabs: [tabs[i]],
-        centroid: tabs[i].embedding
-      };
-
-      // Find all tabs similar to this one
-      for (let j = i + 1; j < tabs.length; j++) {
-        if (assigned.has(tabs[j].tabId)) continue;
-
-        const similarity = this.cosineSimilarity(tabs[i].embedding, tabs[j].embedding);
-        
+    // Pre-compute similarity matrix (upper triangular) for efficiency
+    // Store only pairs that meet threshold to save memory
+    const similarPairs = [];
+    
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const similarity = this.fastCosineSimilarity(tabs[i].embedding, tabs[j].embedding);
         if (similarity >= similarityThreshold) {
-          console.log(`Lookalike Offscreen: Matched! "${tabs[i].title?.slice(0, 25)}" ↔ "${tabs[j].title?.slice(0, 25)}" (${similarity.toFixed(3)})`);
-          cluster.tabs.push(tabs[j]);
-          assigned.add(tabs[j].tabId);
+          similarPairs.push({ i, j, similarity });
         }
       }
-
-      // Mark first tab as assigned
-      assigned.add(tabs[i].tabId);
-
-      // Only create cluster if 2+ tabs
-      if (cluster.tabs.length >= 2) {
-        // Calculate cluster centroid (average embedding)
-        cluster.centroid = this.averageEmbeddings(cluster.tabs.map(t => t.embedding));
-        
-        // Generate group name from cluster content (now async)
-        cluster.groupName = await this.generateGroupName(cluster.tabs, cluster.centroid);
-        cluster.color = this.assignColor();
-        
-        console.log(`Lookalike Offscreen: Created cluster "${cluster.groupName}" with ${cluster.tabs.length} tabs`);
-        clusters.push(cluster);
-      }
     }
 
-    console.log(`Lookalike Offscreen: Total clusters created: ${clusters.length}`);
+    // Sort by similarity (highest first) for better cluster quality
+    similarPairs.sort((a, b) => b.similarity - a.similarity);
+
+    // Build clusters using Union-Find for efficiency
+    const parent = new Array(n).fill(-1).map((_, i) => i);
+    const rank = new Array(n).fill(0);
+
+    const find = (x) => {
+      if (parent[x] !== x) {
+        parent[x] = find(parent[x]); // Path compression
+      }
+      return parent[x];
+    };
+
+    const union = (x, y) => {
+      const px = find(x);
+      const py = find(y);
+      if (px === py) return;
+      
+      // Union by rank
+      if (rank[px] < rank[py]) {
+        parent[px] = py;
+      } else if (rank[px] > rank[py]) {
+        parent[py] = px;
+      } else {
+        parent[py] = px;
+        rank[px]++;
+      }
+    };
+
+    // Union similar tabs
+    for (const { i, j } of similarPairs) {
+      union(i, j);
+    }
+
+    // Group tabs by their root parent
+    const clusterMap = new Map();
+    for (let i = 0; i < n; i++) {
+      const root = find(i);
+      if (!clusterMap.has(root)) {
+        clusterMap.set(root, []);
+      }
+      clusterMap.get(root).push(tabs[i]);
+    }
+
+    // Build final clusters (only groups with 2+ tabs)
+    const clusters = [];
+    for (const clusterTabs of clusterMap.values()) {
+      if (clusterTabs.length < 2) continue;
+
+      const cluster = {
+        tabs: clusterTabs,
+        centroid: this.averageEmbeddings(clusterTabs.map(t => t.embedding))
+      };
+      
+      // Generate group name from cluster content
+      cluster.groupName = await this.generateGroupName(cluster.tabs, cluster.centroid);
+      cluster.color = this.assignColor();
+      
+      clusters.push(cluster);
+    }
+
     return clusters;
   }
 
@@ -498,8 +684,8 @@ class SemanticProcessor {
             return this.formatGroupName(bestMatch.title);
           }
         }
-      } catch (error) {
-        console.log('Lookalike: Error in semantic title matching', error);
+      } catch {
+        // Error in semantic title matching - continue with other strategies
       }
     }
     
@@ -638,11 +824,19 @@ class SemanticProcessor {
   }
 
   /**
-   * Clear all caches
+   * Clear all caches (memory and storage)
    */
-  clearCache() {
+  async clearCache() {
     this.embeddingCache.clear();
+    this.cacheModified = false;
     this.resetColors();
+    
+    // Clear persistent storage
+    try {
+      await chrome.storage.local.remove([CACHE_CONFIG.STORAGE_KEY]);
+    } catch {
+      // Ignore storage errors
+    }
   }
 }
 
@@ -687,7 +881,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
       case 'CLEAR_CACHE':
-        semanticProcessor.clearCache();
+        await semanticProcessor.clearCache();
         return { success: true };
 
       case 'RESET_COLORS':
@@ -708,7 +902,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Signal that offscreen document is ready to receive messages
 chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(() => {});
-console.log('Lookalike Offscreen: Document loaded and ready');
 
 // Don't auto-initialize model - wait for explicit INIT_MODEL message from service worker
 // This prevents race conditions

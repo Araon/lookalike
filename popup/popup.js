@@ -83,8 +83,40 @@ function setupEventListeners() {
       state.modelStatus = 'error';
       updateModelStatus();
       showToast('Model failed to load', 'error');
+    } else if (message.type === 'MODEL_PROGRESS') {
+      updateModelProgress(message.progress);
+    } else if (message.type === 'ANALYSIS_PROGRESS') {
+      updateAnalysisProgress(message.progress, message.completed, message.total);
     }
   });
+}
+
+/**
+ * Update model loading progress
+ */
+function updateModelProgress(progress) {
+  const statusEl = elements.modelStatus;
+  const textEl = statusEl.querySelector('.model-status-text');
+  
+  if (textEl) {
+    textEl.textContent = `Loading model... ${progress}%`;
+  }
+}
+
+/**
+ * Update analysis progress
+ */
+function updateAnalysisProgress(progress, completed, total) {
+  const btn = elements.analyzeAllBtn;
+  if (!btn) return;
+  
+  // Update button text with progress
+  const originalText = btn.dataset.originalText || btn.textContent;
+  if (!btn.dataset.originalText) {
+    btn.dataset.originalText = originalText;
+  }
+  
+  btn.textContent = `Analyzing... ${completed}/${total} (${progress}%)`;
 }
 
 /**
@@ -314,18 +346,25 @@ function createTabItemHTML(tab, _tabData = null) {
 }
 
 /**
- * Handle analyze all tabs
+ * Handle analyze all tabs with progress feedback
  */
 async function handleAnalyzeAll() {
-  elements.analyzeAllBtn.disabled = true;
-  elements.analyzeAllBtn.classList.add('loading');
+  const btn = elements.analyzeAllBtn;
+  const originalText = btn.textContent;
+  btn.dataset.originalText = originalText;
+  
+  btn.disabled = true;
+  btn.classList.add('loading');
   showToast('Analyzing all tabs...', 'info');
   
   try {
     const response = await chrome.runtime.sendMessage({ type: 'ANALYZE_ALL' });
     
     if (response.success) {
-      showToast(`Analyzed ${response.analyzed} tabs`, 'success');
+      const resultMsg = response.errors > 0 
+        ? `Analyzed ${response.analyzed} tabs (${response.errors} failed)`
+        : `Analyzed ${response.analyzed} tabs`;
+      showToast(resultMsg, response.errors > 0 ? 'info' : 'success');
       
       // Refresh state
       await refreshState();
@@ -335,8 +374,10 @@ async function handleAnalyzeAll() {
   } catch (error) {
     showToast('Error analyzing tabs', 'error');
   } finally {
-    elements.analyzeAllBtn.disabled = false;
-    elements.analyzeAllBtn.classList.remove('loading');
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    btn.textContent = originalText;
+    delete btn.dataset.originalText;
   }
 }
 

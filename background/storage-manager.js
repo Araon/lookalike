@@ -39,14 +39,11 @@ export async function initStorage() {
       // Cache version mismatch, clear old data
       await clearAllData();
       await chrome.storage.local.set({ [STORAGE_KEYS.CACHE_VERSION]: CACHE_VERSION });
-      console.log('Lookalike: Cache cleared due to version update');
       return;
     }
     
     // Load data into memory cache
     await loadFromStorage();
-    
-    console.log('Lookalike: Storage initialized');
   } catch (error) {
     console.error('Lookalike: Storage initialization failed', error);
   }
