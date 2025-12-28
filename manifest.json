@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Lookalike - Smart Tab Grouping",
-  "version": "1.0.0",
-  "description": "Automatically group tabs by theme using AI-powered content analysis",
+  "name": "Lookalike - Semantic Tab Grouping",
+  "version": "2.0.0",
+  "description": "Intelligently group tabs using semantic AI - understands content meaning, not just keywords",
   "permissions": [
     "tabs",
     "tabGroups",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "offscreen"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -31,7 +32,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Lookalike - Tab Groups"
+    "default_title": "Lookalike - Semantic Tab Groups"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -39,7 +40,7 @@
     "128": "icons/icon128.png"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://cdn.jsdelivr.net https://huggingface.co https://*.huggingface.co https://*.hf.co"
   }
 }
 
